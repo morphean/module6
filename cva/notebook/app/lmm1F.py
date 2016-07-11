@@ -1,14 +1,21 @@
 import time
 
-from accelerate.cuda.rand import PRNG, QRNG
-from numpy import ndarray, random, empty, zeros, square, sqrt, log, power, put, exp
+from numpy import ndarray, zeros, sqrt, power, put, exp
 from scipy.optimize import fsolve
 
 import CreditDefaultSwap as cds
+import rng
 from utils import printTime
 
 gpuEnabled = True
+# pushing the size of rng generated above 100000 causes GPU to run out of space
+# possible optization is to load it into a 3d vector shape instead of flat structure.
 randN = 100000
+
+randSourceGPU = rng.getPseudoRandomNumbers_Uniform_cuda(randN)
+randSourceCPU = rng.getPseudoRandomNumbers_Uniform(randN)
+
+randSource = randSourceGPU if gpuEnabled else randSourceCPU
 
 debug = False
 
@@ -20,70 +27,6 @@ debug = False
 #     print 'nVidia GPU(s) found: ', getGpuCount()
 #     print 'Enabling GPU for RNG'
 #     gpuEnabled = True
-
-
-
-def getPseudoRandomNumbers_Uniform(length):
-    """
-
-    generates a an array of psuedo random numbers from uniform distribution using numpy
-
-    :param length:
-    :return:
-    """
-    rand = []
-    for i in range(length):
-        rand.append(random.uniform())
-    return rand
-
-
-def getPseudoRandomNumbers_Uniform_cuda(length):
-    """
-
-    generates a an array of psuedo random numbers from uniform distribution using CUDA
-
-    :param length:
-    :return:
-    """
-    prng = PRNG(rndtype=PRNG.XORWOW)
-    rand = empty(length)
-    prng.uniform(rand)
-
-    return rand
-
-
-def getSOBOLseq_cuda(length=int):
-    """
-
-    returns an nd array of supplied length containing a SOBOL sequence of int64
-
-    only for use on systems with CUDA libraries installed
-
-    :param length:
-    :return ndarray:
-    """
-    qrng = QRNG(rndtype=QRNG.SOBOL64)
-    rand = ndarray(shape=100000, dtype=int)
-    qrng.generate(rand)
-
-    return rand[:length]
-
-
-def getBoxMullerSample(randSource=ndarray):
-    t = 1.0
-    while t >= 1.0 or t == 0.0:
-        randValues = random.choice(randSource, 2)
-        x = randValues[0]
-        y = randValues[1]
-        t = square(x) + square(y)
-
-    result = x * sqrt(-2 * log(t) / t)
-    return result
-
-
-randSourceGPU = getPseudoRandomNumbers_Uniform_cuda(randN)
-randSourceCPU = getPseudoRandomNumbers_Uniform(randN)
-
 
 class lSimulation:
     def __init__(self, liborTable=ndarray, dfTable=ndarray):
@@ -111,7 +54,7 @@ class lSimulation:
 
 
 class LMM1F:
-    def __init__(self, strike=0.05, alpha=0.5, sigma=0.15, dT=0.5, nFwdRates=4, nSims=10):
+    def __init__(self, strike=0.05, alpha=0.5, sigma=0.15, dT=0.5, nFwdRates=4, nSims=10, initialSpotRates=ndarray):
         """
 
         :param strike:  caplet
@@ -127,6 +70,7 @@ class LMM1F:
         self.dT = dT
         self.N = nFwdRates
         self.M = nSims
+        self.initialSpotRates = initialSpotRates
 
     def generateLiborSim(self):
 
@@ -136,11 +80,8 @@ class LMM1F:
         # init zero based tables
 
         # init spot rates
-        l[0][0] = 0.01
-        l[1][0] = 0.03
-        l[2][0] = 0.05
-        l[3][0] = 0.07
-        l[4][0] = 0.09
+        for index, s in enumerate(self.initialSpotRates):
+            l[index][0] = s
 
         simulations = []
 
@@ -164,7 +105,7 @@ class LMM1F:
     def initDiscountFactors(self, length=int):
         seq = zeros(self.N + 1)
         for dWi in xrange(1, length):
-            dW = sqrt(self.dT) * getBoxMullerSample(randSourceGPU if gpuEnabled else randSourceCPU)
+            dW = sqrt(self.dT) * rng.getBoxMullerSample()
             put(seq, dWi, dW)
 
         if debug:
@@ -200,7 +141,7 @@ class LMM1F:
 
 
 n = 100
-irEx = LMM1F(nSims=n)
+irEx = LMM1F(nSims=n, initialSpotRates=[0.01, 0.03, 0.04, 0.05, 0.07])
 start_time = time.clock()
 a = irEx.getSimulationData()
 printTime('GPU: generating simulartion data took: ', start_time)
