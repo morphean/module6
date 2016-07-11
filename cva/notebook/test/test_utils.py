@@ -1,6 +1,6 @@
 from unittest import TestCase
 
-from app import utils
+from notebook.app import utils
 
 
 class TestUtils(TestCase):

@@ -1,6 +1,6 @@
 from unittest import TestCase
 
-from app import cva
+from notebook.app import cva
 
 
 class TestGenerateForwardRateCurve(TestCase):
