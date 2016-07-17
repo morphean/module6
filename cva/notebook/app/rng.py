@@ -1,5 +1,5 @@
 from accelerate.cuda.rand import PRNG, QRNG
-from numpy import ndarray, empty, random, square, log, sqrt
+from numpy import ndarray, empty, random, square, log, sqrt, put
 
 
 def getPseudoRandomNumbers_Uniform(length):
@@ -10,9 +10,9 @@ def getPseudoRandomNumbers_Uniform(length):
     :param length:
     :return:
     """
-    rand = []
+    rand = empty(length)
     for i in range(length):
-        rand.append(random.uniform())
+        put(rand, i, random.uniform())
     return rand
 
 
