@@ -75,6 +75,10 @@ def simulateCopula(simulations=10, type=str('g'), rho=float, lamda=tuple, tDof=4
                        'u4': u4,
                        'u5': u5,
                        'tau1': tau1,
-                       'tau2': tau2})
+                       'tau2': tau2,
+                       'tau3': tau3,
+                       'tau4': tau4,
+                       'tau5': tau5,
+                       })
 
     return DataFrame(result)
