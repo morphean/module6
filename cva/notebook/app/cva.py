@@ -240,7 +240,7 @@ exposure = calculateExposure(generateMtM(sw))
 ps = [1 - recoveryRate] * len(exposure)
 
 noOfSimulations = 10
-
+# TODO - plugin ee from LMM_sim
 expectedExposure = mc_sim_exposure(10)
 
 # smoothCurve = np.linspace(exposure.min(), exposure.max(), 300)
@@ -248,7 +248,7 @@ expectedExposure = mc_sim_exposure(10)
 
 
 
-
+# discrete integration
 cvaData = getAverageValuesForTimeStepGivenData(
     {EXPOSURE: exposure,
      DISCOUNT_FACTOR: discFac,

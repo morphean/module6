@@ -2,7 +2,7 @@ import time
 from itertools import cycle
 
 from matplotlib import pyplot
-from numpy import ndarray, zeros, sqrt, put, exp, linspace, array, append, square, full_like, mean, percentile, insert
+from numpy import ndarray, zeros, sqrt, put, exp, linspace, array, append, square, mean, percentile, insert
 from scipy.optimize import fsolve
 
 import CreditDefaultSwap as cds
@@ -19,7 +19,6 @@ def initRandSource():
     randSourceCPU = rng.getPseudoRandomNumbers_Uniform(randN)
     return randSourceGPU if gpuEnabled else randSourceCPU
 
-
 randSource = initRandSource()
 
 debug = False
@@ -33,7 +32,7 @@ debug = False
 #     gpuEnabled = True
 
 monthTenor = 60.
-paymentFrequency = 6.
+paymentFrequency = 12.
 yearFraction = paymentFrequency / monthTenor
 noOfPayments = monthTenor / paymentFrequency
 
@@ -90,8 +89,8 @@ class lSimulation(object):
         for index in range(0, len(self.__liborTable)):
             fwdCurve = self.__liborTable[:, index]
             df = self.__dfTable[1:, index]
-            notionalArray = full_like(fwdCurve, notional)
-            dtArray = full_like(fwdCurve, dt)
+            # notionalArray = full_like(fwdCurve, notional)
+            # dtArray = full_like(fwdCurve, dt)
             # print fwdCurve
             # print df
             # print notionalArray
@@ -113,13 +112,13 @@ class lSimulation(object):
         return payments
 
 class LMM1F:
-    def __init__(self, strike=0.05, alpha=0.5, sigma=0.15, dT=0.25, nSims=10, initialSpotRates=ndarray):
+    def __init__(self, strike=0.05, alpha=0.5, sigma=0.15, dT=0.5, nSims=10, initialSpotRates=ndarray, notional=float):
         """
 
         :param strike:  caplet
         :param alpha: daycount factor
         :param sigma: fwd rates volatility
-        :param dT:
+        :param dT: 6M (year fraction of 0.5 is default)
         :param nSims: no of simulations to run
         """
         self.K = strike
@@ -129,6 +128,7 @@ class LMM1F:
         self.N = len(initialSpotRates) - 1
         self.M = nSims
         self.initialSpotRates = initialSpotRates
+        self.notional = notional
 
     def simulateLMMviaMC(self):
 
@@ -153,7 +153,7 @@ class LMM1F:
             # computeDiscountRatesTableau
             # d = self.computeDiscountRatesTableau(self.N, l, d, self.alpha)
 
-            storeValue = lSimulation(l, d, notional, self.dT)
+            storeValue = lSimulation(l, d, self.notional, self.dT)
             simulations.append(storeValue)
         return array(simulations)
 
@@ -201,7 +201,7 @@ class LMM1F:
 
 def benchmark():
     n = 100
-    initRates = [0.01, 0.03, 0.04, 0.05, 0.07]
+    initRates = array([0.01, 0.03, 0.04, 0.05, 0.07])
     irEx = LMM1F(nSims=n, initialSpotRates=initRates)
     start_time = time.clock()
     a = irEx.getSimulationData()
@@ -228,11 +228,20 @@ def benchmark():
     printTime('CPU: generating simulation data', start_time)
 
 
+n = 100
+initRates = array([0.01, 0.03, 0.04, 0.05, 0.07])
+irEx = LMM1F(nSims=n, initialSpotRates=initRates, notional=2000000)
+start_time = time.clock()
+a = irEx.getSimulationData()
+printTime('GPU: generating simulation data', start_time)
+
+
 df = [0, 0.9975, 0.9900, 0.9779, 0.9607]
 seed = 0.01
 payments = 4
-notional = 1000000
-
+notional = 2000000
+# fixed hazard rates
+lamda = 0.03
 
 def calibrateCDS(lamda=float, seed=0.01):
     c = cds.CreditDefaultSwap(N=notional, timesteps=payments, discountFactors=df, lamda=lamda, seed=seed)
@@ -242,7 +251,8 @@ def calibrateCDS(lamda=float, seed=0.01):
 #
 # p = optimize.minimize(calibrateCDS, [0.03,0.02,0.01, 0.0128], options={'gtol':1e-6, 'disp': True})
 
-calibratedLambda = fsolve(calibrateCDS, 0.03)
+calibratedLambda = fsolve(calibrateCDS, lamda)
+
 print calibratedLambda
 c = cds.CreditDefaultSwap(N=notional, timesteps=payments, discountFactors=df, lamda=calibratedLambda, seed=seed)
 
@@ -260,15 +270,16 @@ initRates_BOE_SPT = [0.461370334, 0.452898877, 0.443905273, 0.435584918, 0.42871
                      0.633095655, 0.63989227, 0.646709286, 0.653550185, 0.660418244, 0.667316554, 0.67424803,
                      0.681215261, 0.688220353, 0.695264957, 0.702350311, 0.709477279, 0.716646384, 0.723857839,
                      0.731111575, 0.738407263, 0.745744337, 0.753122018]
+
 initRates_BOE_6m = [0.423546874, 0.425980925, 0.45950348, 0.501875772, 0.551473011, 0.585741857, 0.626315731,
                     0.667316554, 0.709477279, 0.753122018]
-irEx = LMM1F(nSims=n, initialSpotRates=initRates_BOE_6m, dT=yearFraction)
+
+irEx = LMM1F(nSims=n, initialSpotRates=initRates, dT=yearFraction, notional=notional)
 start_time = time.clock()
 a = irEx.getSimulationData()
-printTime('GPU: generating simulation data', start_time)
+printTime('CPU: generating simulation data', start_time)
 
 # plot simulationsz
-
 cycol = cycle('cmy').next
 
 for simulation in a:
@@ -278,8 +289,8 @@ for simulation in a:
 
 # get expected Exposure
 expectedExposure = mean(array([s.mtm for s in a]), axis=0)
-ninetySevenP5 = percentile(array([s.mtm for s in a]), 97.5, axis=0)
-twoP5 = percentile(array([s.mtm for s in a]), 2.5, axis=0)
+ninetySevenP5 = percentile(array([s.mtm for s in a]), q=97.5, axis=0)
+twoP5 = percentile(array([s.mtm for s in a]), q=2.5, axis=0)
 
 # rate from B91 on ukois16_mdaily.xls
 initRates_BOE_6m_plot = insert(initRates_BOE_6m, 0, 0.463126310164261)
@@ -288,13 +299,12 @@ initRates_BOE_6m_plot = insert(initRates_BOE_6m, 0, 0.463126310164261)
 pyplot.plot(x, append(ninetySevenP5, 0.0), c='#00CC00', lw=2, alpha=0.8)
 pyplot.plot(x, append(twoP5, 0.0), c='#0000CC', lw=2, alpha=0.8)
 pyplot.plot(x, append(expectedExposure, 0.0), c='#FF0000', lw=2, alpha=0.8)
-pyplot.plot(x, initRates_BOE_6m_plot, lw=2, alpha=0.8)
+# pyplot.plot(x, initRates, lw=2, alpha=0.8)
 pyplot.xlabel('$\Delta t$')
 pyplot.xticks(timesteps)
 pyplot.ylabel('Payment')
+pyplot.legend()
 pyplot.grid(True)
 pyplot.show()
 
 fig, ax = pyplot.subplot()
-
-print 'ee', expectedExposure

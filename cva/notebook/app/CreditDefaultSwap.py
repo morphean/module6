@@ -1,7 +1,7 @@
-from numpy import array, ones, zeros, linspace, exp, put, sum
+from numpy import array, ones, zeros, linspace, exp, put, sum, log
 
 
-class CreditDefaultSwap:
+class CreditDefaultSwap(object):
     def __init__(self, N=float, timesteps=int, discountFactors=list, lamda=float, seed=float):
         self.N = N  # notional
         self.__lamda = lamda
@@ -16,6 +16,8 @@ class CreditDefaultSwap:
         self.pD = self.generateProbDefault()
         self.defaultLegsSpread = self.calculateDefaultLegSpreads()
         self.__defaultLegSum = sum(self.defaultLegsSpread)
+        self.fairSpread = self.premiumLegsSpread / self.defaultLegsSpread
+
 
     @property
     def premiumLegSum(self):
@@ -43,7 +45,6 @@ class CreditDefaultSwap:
             if t > 0:
                 ps = exp(self.lamda * -1 * t)
                 put(pt, index, ps)
-
         return pt
 
     def generateProbDefault(self):
@@ -74,8 +75,39 @@ class CreditDefaultSwap:
         return spreads
 
     def calcCVA(self, expectedExposure=array):
-
+        # LAST BIT to DO
         return True
 
     def calcBVA(self, eeA=array, eeB=array):
+        # LAST BIT TO DO
         return True
+
+
+class BasketCDS(CreditDefaultSwap):
+    def __init__(self, N=float, timesteps=int, discountFactors=list, lamda=float, seed=float):
+        super(BasketCDS, self).__init__(N, timesteps, discountFactors, lamda, seed)
+        self.hazardRates = self.generateHazardRates()
+
+    def getDefaultTime(self):
+        """
+        if ProbOfSurv >= hazard rate -> default
+        return tau
+
+        :return: float
+        """
+        tau
+        return 0.0
+
+    def generateHazardRates(self):
+        """
+        generate hazard rates using:
+        $\Lambda_m = -\frac({1}{\delta t} log \frac{P(0,t_m)}{P(0,t_{m-1})} $
+        :return:
+        """
+        hz = zeros(len.self.timesteps)
+        for index, pt in enumerate(self.pT):
+            if index > 0:
+                hz_m = -(1 / self.Dt) * log(pt / self.pT[index - 1])
+                put(hz_m, index, hz)
+
+        return hz

@@ -1,5 +1,7 @@
 import time
 
+from pandas import read_excel
+
 
 def getTPlusFromList(source=list, index=int, average=bool):
     """
@@ -40,3 +42,19 @@ def printTime(message=str, start=int):
     :return:
     """
     print (message + ' took: ' + repr(time.clock() - start) + ' seconds')
+
+
+def loadBasketData(basket=list, srcDataPath=str):
+    """
+    loads basket data given list of names in an excel sheet
+    could be adapted to use JSON, CSV etc. using the relevant method from pandas library
+    :param basket:
+    :return: array
+    """
+    basketData = []
+    # read data
+    for item in basket:
+        itemData = read_excel(srcDataPath, sheetname=item, header=1, skiprows=0)
+        basketData.append(itemData)
+
+    return basketData
