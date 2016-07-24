@@ -43,13 +43,15 @@ def simulateCopula(simulations=10, type=str('g'), rho=float, lamda=tuple, tDof=4
         if useGPU and type == 'g':
             z1, z2, z3, z4, z5 = rng.getPseudoRandomNumbers_Standard_cuda(basketSize)
         else:
-            z1, z2, z3, z4, z5 = random.standard_t(tDof, size=basketSize) if type == 't' else random.normal(size=5)
+            z1, z2, z3, z4, z5 = random.chisquare(tDof, size=basketSize) if type == 't' else random.normal(size=5)
         # z1, z2, z3, z4, z5 = chi2.rvs(1, size=5) if type == 't' else random.normal(size=5)
 
         x1 = z1
+
         # using factorised copula procedure
         # $A_i = w_iZ + \sqrt{1-w{^2}{_i}\Epsilon_i $
         x2, x3, x4, x5 = [z1 * rho + sqrt(1 - square(rho)) * zn for zn in [z2, z3, z4, z5]]
+
         # converting to normal variables from t or normal distribution successfully
         # via cdf of relevant distribution
         if type == 't':

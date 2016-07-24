@@ -18,7 +18,6 @@ class CreditDefaultSwap(object):
         self.__defaultLegSum = sum(self.defaultLegsSpread)
         self.fairSpread = self.premiumLegsSpread / self.defaultLegsSpread
 
-
     @property
     def premiumLegSum(self):
         return self.__premiumLegSum
@@ -84,11 +83,51 @@ class CreditDefaultSwap(object):
 
 
 class BasketCDS(CreditDefaultSwap):
-    def __init__(self, N=float, timesteps=int, discountFactors=list, lamda=float, seed=float):
+    def __init__(self, N=float, timesteps=int, discountFactors=list, lamda=float, seed=float, dt=float):
         super(BasketCDS, self).__init__(N, timesteps, discountFactors, lamda, seed)
         self.hazardRates = self.generateHazardRates()
+        self.dt = dt
 
-    def getDefaultTime(self):
+    def bootstrapCurve(self, spreads=list):
+        ts = []
+        impPs = []
+
+        for index, spread in enumerate(spreads):
+            # calc implied survival prob
+            x = dict()
+            if index == 0:
+                impPs.append(1.0)
+            else:
+                # $\frac{(1-R)}{(1-R)+\deltaT*s}$
+                isp = (1 - self.recoveryRate) / ((1 - self.recoveryRate) + self.dt * spread / 10000)
+                impPs.append(isp)
+        return ts
+
+    def buildTermStructure(self, spreads=list):
+        """
+        returns terms structure matrix
+        spreads should be supplied unscaled (ie as quoted from market data)
+        :type spreads: list
+        """
+        t0 = [0.0]
+        oneMr = 1 - self.recoveryRate
+
+        # spreads are input as basis points so scale them for calculations
+        scaledSpreads = [spreads] / 10000
+
+        impliedProbSurvival = [1.0]
+        impliedProbSurvival[1] = (oneMr) / ((oneMr) + self.dt * scaledSpreads[0])
+
+        t1 = 0.0
+        t2 = self.discountFactors[0] * ((1 - self.recoveryRate) * impliedProbSurvival) - (
+                                                                                             1 - self.recoveryRate + self.dt *
+                                                                                             scaledSpreads[1]) *
+        t3 = self.discountFactors[0] * ((1 - self.recoveryRate) * impliedProbSurvival) - (
+            1 - self.recoveryRate + self.dt * scaledSpreads[2])
+
+        return t0
+
+    def getDefaultPeriod(self):
         """
         if ProbOfSurv >= hazard rate -> default
         return tau
@@ -97,6 +136,13 @@ class BasketCDS(CreditDefaultSwap):
         """
         tau
         return 0.0
+
+    def getExactDefaultTIme(self):
+        """
+        $ \deltat = - \frac{}{} log \frac{1-u}{P(0,t_{n-1}} $
+        :return:
+        """
+        return dt
 
     def generateHazardRates(self):
         """
