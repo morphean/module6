@@ -2,7 +2,8 @@
 
 Notebooks for the final project can be accessed using the following url: (password available on request)
 
-http://cqf.morphean.co.uk/
+CVA - http://cqf.morphean.co.uk/notebooks/cva/notebook/Credit%20Valuation%20Adjustment.ipynb
+Credit Portfolio - http://cqf.morphean.co.uk/notebooks/cva/notebook/Pricing%20Basket.ipynb
 
 ### Contents ###
 
