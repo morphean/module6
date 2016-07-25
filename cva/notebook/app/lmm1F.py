@@ -23,23 +23,24 @@ randSource = initRandSource()
 
 debug = False
 
-# print 'Checking for compatible GPU ...'
-# if getGpuCount() < 1:
-#     print 'no compatible GPU installed, will revert to using numpy libraries for RNG'
-# else:
-#     print 'nVidia GPU(s) found: ', getGpuCount()
-#     print 'Enabling GPU for RNG'
-#     gpuEnabled = True
+# 5Y tenor
+noOfYears = 5.
+# 6M payments
+paymentFrequency = 0.5
+yearFraction = paymentFrequency / noOfYears
+noOfPayments = noOfYears / paymentFrequency
 
-monthTenor = 60.
-paymentFrequency = 12.
-yearFraction = paymentFrequency / monthTenor
-noOfPayments = monthTenor / paymentFrequency
-
+# no of timesteps
 timesteps = linspace(0, 1, noOfPayments + 1)
 
-
 class lSimulation(object):
+    """
+    this class is used a container for a single simulation
+    providing convenenience methods to retrieve
+    markToMarket values
+    eeA = expected exposure from the simulation for Counterparty A
+    eeB = expected exposure from the simulation for Counterparty B
+    """
     def __init__(self, liborTable=ndarray, dfTable=ndarray, notional=1000000, dt=0.25, k=0.04):
         """
 
@@ -58,7 +59,7 @@ class lSimulation(object):
 
         self.mtm = array([flt - fxd for flt, fxd in self.payments])
 
-        # expected exposture for counterParty A (using positive mtm)
+        # expected exposure for counterParty A (using positive mtm)
         self.eeA = [max(L - K, 0) for L, K in self.payments]
 
         # expected exposure for counterParty B (using negative mtm)
@@ -182,7 +183,6 @@ class LMM1F:
 
                 newVal = l[i][n] * exp((-drift_sum * sigma - 0.5 * square(sigma)) * dT + sigma * dW[n + 1])
                 put(l[i], n + 1, newVal)
-                # l[i][n + 1] = l[i][n] * np.math.exp((-drift_sum * sigma - 0.5 * sigma * sigma) * dT + sigma * dW[n + 1])
 
                 if debug:
                     print 'L: i = ', i, ', n = ', n + 1, ', = ', l[i][n + 1]
@@ -239,11 +239,12 @@ printTime('GPU: generating simulation data', start_time)
 df = [0, 0.9975, 0.9900, 0.9779, 0.9607]
 seed = 0.01
 payments = 4
-notional = 2000000
+notional = 1000000
 # fixed hazard rates
 lamda = 0.03
 
 def calibrateCDS(lamda=float, seed=0.01):
+    # calibration method
     c = cds.CreditDefaultSwap(N=notional, timesteps=payments, discountFactors=df, lamda=lamda, seed=seed)
     return c.markToMarket
 
@@ -299,6 +300,7 @@ initRates_BOE_6m_plot = insert(initRates_BOE_6m, 0, 0.463126310164261)
 pyplot.plot(x, append(ninetySevenP5, 0.0), c='#00CC00', lw=2, alpha=0.8)
 pyplot.plot(x, append(twoP5, 0.0), c='#0000CC', lw=2, alpha=0.8)
 pyplot.plot(x, append(expectedExposure, 0.0), c='#FF0000', lw=2, alpha=0.8)
+pyplot.plot(x, a(initRates_BOE_6m), lw=2, alpha=0.8)
 # pyplot.plot(x, initRates, lw=2, alpha=0.8)
 pyplot.xlabel('$\Delta t$')
 pyplot.xticks(timesteps)
