@@ -223,10 +223,8 @@ def getAverageValuesForTimeStepGivenData(data=dict):
     return result
 
 
-# def oneFactorLiborModel():
-
-# def mc_sim_exposure(noOfSims=int):
-
+def mc_sim_exposure(noOfSims=int):
+    pass
 
 fwdRates = genFwdCurve(timeSteps, spotRatesN)
 probDef = genDefaultProbabilities(0.03, timeSteps)
@@ -267,7 +265,7 @@ def sumCVA(data=list):
 
 print cvaData, len(cvaData)
 
-print sumCVA(cvaData)
+print 'CVA: ' + sumCVA(cvaData)
 
 
 # print mergeLists(avgDiscFactor, avgExposure)
@@ -275,7 +273,6 @@ print sumCVA(cvaData)
 def getCvaForTimeStep(e=float, df=float, pd=float, rr=float):
     return e * df * pd * (1 - rr)
 
-# print cva
 
 # cva for each time step
 # cva = DFi*PD*(1-r)

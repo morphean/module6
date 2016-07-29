@@ -1,7 +1,7 @@
 import time
 
+from numpy import power
 from pandas import read_excel
-
 
 def getTPlusFromList(source=list, index=int, average=bool):
     """
@@ -14,7 +14,7 @@ def getTPlusFromList(source=list, index=int, average=bool):
     :rtype any
     """
     if index + 1 == len(source):
-        return 0
+        return 0.
     else:
         return source[index + 1] if not average else (source[index] + source[index + 1]) * 0.5
 
@@ -58,3 +58,35 @@ def loadBasketData(basket=list, srcDataPath=str):
         basketData.append(itemData)
 
     return basketData
+
+
+# noinspection PyTypeChecker
+def scaleFromBasisPoints(toScale=any):
+    """
+    Takes an input either list of floats or a single float
+    and scales it to normal number for calculation purposes
+    ( divide by 10^4 )
+    :param toScale:
+    :return:
+    """
+    scaleFactor = power(10, -4)
+    if toScale is list:
+        return [item * scaleFactor for item in toScale]
+    if toScale is float:
+        return toScale * scaleFactor
+
+
+# noinspection PyTypeChecker
+def scaleToBasisPoints(toScale=any):
+    """
+    Takes an input either list of floats or a single float
+    and scales it to normal number for calculation purposes
+    ( multiply by 10^4 )
+    :param toScale:
+    :return:
+    """
+    scaleFactor = power(10, 4)
+    if toScale is list:
+        return [item * scaleFactor for item in toScale]
+    if toScale is float:
+        return toScale * scaleFactor

@@ -2,7 +2,8 @@ import time
 from itertools import cycle
 
 from matplotlib import pyplot
-from numpy import ndarray, zeros, sqrt, put, exp, linspace, array, append, square, mean, percentile, insert
+from numba import autojit
+from numpy import zeros, sqrt, put, exp, linspace, array, append, square, mean, percentile, insert
 from scipy.optimize import fsolve
 
 import CreditDefaultSwap as cds
@@ -10,14 +11,17 @@ import rng
 from utils import printTime
 
 gpuEnabled = False
+
+
 # pushing the size of rng generated above 100000 causes GPU to run out of space
 # possible optization is to load it into a 3d vector shape instead of flat structure.
-
+@autojit
 def initRandSource():
     randN = 100000
     randSourceGPU = rng.getPseudoRandomNumbers_Uniform_cuda(randN) if gpuEnabled else []
     randSourceCPU = rng.getPseudoRandomNumbers_Uniform(randN)
     return randSourceGPU if gpuEnabled else randSourceCPU
+
 
 randSource = initRandSource()
 
@@ -33,92 +37,15 @@ noOfPayments = noOfYears / paymentFrequency
 # no of timesteps
 timesteps = linspace(0, 1, noOfPayments + 1)
 
-class lSimulation(object):
-    """
-    this class is used a container for a single simulation
-    providing convenenience methods to retrieve
-    markToMarket values
-    eeA = expected exposure from the simulation for Counterparty A
-    eeB = expected exposure from the simulation for Counterparty B
-    """
-    def __init__(self, liborTable=ndarray, dfTable=ndarray, notional=1000000, dt=0.25, k=0.04):
-        """
 
-        :type k: float
-        :type dt: float
-        :type notional: float
-        :type dfTable: ndarray
-        :type liborTable: ndarray
-        """
-        self.__liborTable = liborTable
-        self.__dfTable = dfTable
-
-        # calculate payments for each timestep using the given notional, tenor, fixed rate,
-        # floating(simulated) and discount factors (simulated)
-        self.payments = self.calcPayments(notional, dt, k)
-
-        self.mtm = array([flt - fxd for flt, fxd in self.payments])
-
-        # expected exposure for counterParty A (using positive mtm)
-        self.eeA = [max(L - K, 0) for L, K in self.payments]
-
-        # expected exposure for counterParty B (using negative mtm)
-        self.eeB = [min(L - K, 0) for L, K in self.payments]
-
-
-    def liborTable(self):
-        return self.__liborTable
-
-    def dfTable(self):
-        return self.__dfTable
-
-    def calcPayments(self, notional=float, dt=float, fixed=-1.0):
-        """
-        calculate payments for the simulation of the Fwd rates and discount factors
-        given notional and tenor
-
-        if fixed is set it will use a fixed rate
-        there is the possibility here of a negative interest rate but that is outside the
-        scope of this exercise
-        :param notional:
-        :param dt:
-        :param fixed:
-        :return: float
-        """
-        payments = []
-
-        for index in range(0, len(self.__liborTable)):
-            fwdCurve = self.__liborTable[:, index]
-            df = self.__dfTable[1:, index]
-            # notionalArray = full_like(fwdCurve, notional)
-            # dtArray = full_like(fwdCurve, dt)
-            # print fwdCurve
-            # print df
-            # print notionalArray
-            # print dtArray
-            # print fwdCurve*df*notionalArray*dtArray
-
-            floatingLeg = [fwd * dfi * notional * dt for fwd, dfi in zip(fwdCurve, df)]
-            fixedLeg = [fixed * dfi * notional * dt for dfi in df]
-            # fixedLeg[len(self.__liborTable)] = 0
-            payments.append([sum(floatingLeg), sum(fixedLeg)])
-
-            if debug:
-                print 'from t-', index, '--- fixed - ', sum(fixedLeg), '--- floating -', sum(floatingLeg)
-                print fixedLeg
-                print '--'
-                print floatingLeg
-                print '--'
-
-        return payments
-
-class LMM1F:
-    def __init__(self, strike=0.05, alpha=0.5, sigma=0.15, dT=0.5, nSims=10, initialSpotRates=ndarray, notional=float):
+# @jitclass
+class LMM1F(object):
+    def __init__(self, nSims=int, initialSpotRates=array, notional=float, strike=0.05, alpha=0.5, sigma=0.15, dT=0.5, ):
         """
 
         :param strike:  caplet
         :param alpha: daycount factor
-        :param sigma: fwd rates volatility
+        :param sigma: fwd rates volatility - assuming 15%
         :param dT: 6M (year fraction of 0.5 is default)
         :param nSims: no of simulations to run
         """
@@ -130,7 +57,9 @@ class LMM1F:
         self.M = nSims
         self.initialSpotRates = initialSpotRates
         self.notional = notional
+        self.simulations = []
 
+    # @jit(target='cpu')
     def simulateLMMviaMC(self):
 
         l = zeros(shape=(self.N + 1, self.N + 1), dtype=float)
@@ -142,26 +71,27 @@ class LMM1F:
         for index, s in enumerate(self.initialSpotRates):
             l[index][0] = s
 
-        simulations = []
+            for i in xrange(self.M):
+                # setup brownian motion multipliers
+                gbm_multipliers = self.initWeinerProcess(self.N + 1)
 
-        for i in xrange(self.M):
-            # setup brownian motion multipliers
-            gbm_multipliers = self.initWeinerProcess(self.N + 1)
+                # compute Fwd Rates And DiscountFactors Tableau
+                l, d = self.computeTableaus(self.N, self.alpha, self.sigma, l, self.dT, gbm_multipliers, d)
 
-            # computeFwdRatesTableau
-            l, d = self.computeTableaus(self.N, self.alpha, self.sigma, l, self.dT, gbm_multipliers, d)
+                sim = cds.Simulation(l, d, self.notional, self.dT)
+                self.simulations.append(sim)
+                # print 'Completed simulation: ', i
+        return self.simulations
 
-            # computeDiscountRatesTableau
-            # d = self.computeDiscountRatesTableau(self.N, l, d, self.alpha)
-
-            storeValue = lSimulation(l, d, self.notional, self.dT)
-            simulations.append(storeValue)
-        return array(simulations)
-
+    # @jit(target='cpu')
     def getSimulationData(self):
-        simulations = self.simulateLMMviaMC()
-        return simulations
+        # implied singleton here, so that dataset is not regenerated on each call to this method
+        if len(self.simulations) == 0:
+            self.simulations = self.simulateLMMviaMC()
 
+        return array(self.simulations)
+
+    # @jit(target='cpu')
     def initWeinerProcess(self, length=int):
         seq = zeros(self.N + 1)
         for dWi in xrange(length):
@@ -172,7 +102,19 @@ class LMM1F:
             print 'Discount Factors', seq
         return seq
 
+    # @jit(target='cpu')
     def computeTableaus(self, N=int, alpha=float, sigma=float, l=array, dT=float, dW=array, d=array):
+        """
+        Using Pessler Tableau to compute LIBOR rates and accompanying discount factors
+        :param N:
+        :param alpha:
+        :param sigma:
+        :param l:
+        :param dT:
+        :param dW:
+        :param d:
+        :return:
+        """
         for n in range(0, N):
 
             for i in range(n + 1, N + 1):  # (int i = n + 1; i < N + 1; ++i)
@@ -229,19 +171,21 @@ def benchmark():
 
 
 n = 100
-initRates = array([0.01, 0.03, 0.04, 0.05, 0.07])
-irEx = LMM1F(nSims=n, initialSpotRates=initRates, notional=2000000)
+# initRates = array([0.01, 0.03, 0.04, 0.05, 0.07])
+initRates = array([0.01, 0.00037, 0.00232, 0.00306, 0.00437])
+irEx = LMM1F(nSims=n, initialSpotRates=initRates, notional=1000000)
 start_time = time.clock()
 a = irEx.getSimulationData()
 printTime('GPU: generating simulation data', start_time)
 
-
-df = [0, 0.9975, 0.9900, 0.9779, 0.9607]
+# df = [0.9975, 0.9900, 0.9779, 0.9607]
+df = [0.9999, 0.9988, 0.9776, 0.9662]
 seed = 0.01
 payments = 4
 notional = 1000000
 # fixed hazard rates
 lamda = 0.03
+
 
 def calibrateCDS(lamda=float, seed=0.01):
     # calibration method
@@ -249,17 +193,58 @@ def calibrateCDS(lamda=float, seed=0.01):
     return c.markToMarket
 
 
+def getExpectedExposure(simData=array):
+    expectedExposure = mean(array([sim.mtm for sim in simData]), axis=0)
+    return expectedExposure
+
+
+def getPercentile(simData=array, p=float):
+    ptile = percentile(array([sim.mtm for sim in simData]), q=p, axis=0)
+    return ptile
+
+
+def plotExpectedExposure(simData=array):
+    # plot simulationsz
+    cycol = cycle('cmy').next
+
+    for simulation in a:
+        x, y = timesteps, append(simulation.mtm, 0)
+        # print y[0]
+        pyplot.plot(x, y, 's', c=cycol(), lw=0.5, alpha=0.6)
+
+    # get expected Exposure
+    expectedExposure = getExpectedExposure(simData=simData)
+    ninetySevenP5 = getPercentile(simData=simData, p=97.5)
+    twoP5 = getPercentile(simData=simData, p=2.5)
+
+    # rate from B91 on ukois16_mdaily.xls
+    initRates_BOE_6m_plot = insert(initRates_BOE_6m, 0, 0.463126310164261)
+    # add to plot
+    # pyplot.plot(x, twoP5,c='#000000', lw=2, alpha=0.8)
+    pyplot.plot(x, append(ninetySevenP5, 0.0), c='#00CC00', lw=2, alpha=0.8)
+    pyplot.plot(x, append(twoP5, 0.0), c='#0000CC', lw=2, alpha=0.8)
+    pyplot.plot(x, append(expectedExposure, 0.0), c='#FF0000', lw=2, alpha=0.8)
+    # pyplot.plot(x, append(initRates_BOE_6m,0.0), lw=2, alpha=0.8)
+    # pyplot.plot(x, initRates, lw=2, alpha=0.8)
+    pyplot.xlabel('$\Delta t$')
+    pyplot.xticks(timesteps)
+    pyplot.title('Simulated $L_{6M}$')
+    pyplot.ylabel('Payment')
+    pyplot.legend()
+    pyplot.grid()
+    pyplot.show()
+
 #
 # p = optimize.minimize(calibrateCDS, [0.03,0.02,0.01, 0.0128], options={'gtol':1e-6, 'disp': True})
 
 calibratedLambda = fsolve(calibrateCDS, lamda)
 
 print calibratedLambda
-c = cds.CreditDefaultSwap(N=notional, timesteps=payments, discountFactors=df, lamda=calibratedLambda, seed=seed)
+c = cds.CreditDefaultSwap(N=notional, timesteps=payments, discountFactors=df, lamda=lamda, seed=seed)
 
 print c.markToMarket
 
-n = 1000
+n = 10
 # from
 # initRates = [0.004625384831,0.006812859244,0.009606329010,0.012040577151,0.013898638373,0.015251633803,0.016212775988,0.016899521932,0.017420140777,0.017841154790]
 initRates_BOE_SPT = [0.461370334, 0.452898877, 0.443905273, 0.435584918, 0.428713527, 0.423546874, 0.420158416,
@@ -275,38 +260,24 @@ initRates_BOE_SPT = [0.461370334, 0.452898877, 0.443905273, 0.435584918, 0.42871
 initRates_BOE_6m = [0.423546874, 0.425980925, 0.45950348, 0.501875772, 0.551473011, 0.585741857, 0.626315731,
                     0.667316554, 0.709477279, 0.753122018]
 
-irEx = LMM1F(nSims=n, initialSpotRates=initRates, dT=yearFraction, notional=notional)
+initRates_scaled = [x * 1 / 100. for x in initRates_BOE_6m]
+BOE_6m_discountFactors = cds.genDiscountFactors(timesteps, initRates_scaled)
+BOE_6m_fwdCurve = cds.genFwdCurve(timesteps, initRates_scaled)
+# payments = 10
+# d = cds.CreditDefaultSwap(N=notional, timesteps=payments, discountFactors=BOE_6m_discountFactors, lamda=lamda, seed=seed, recoveryRate=0.4, Dt=0.5)
+# c = cds.CreditDefaultSwap(N=notional, timesteps=payments, discountFactors=df, lamda=lamda, seed=seed, recoveryRate=0.4, Dt=0.25)
+# simulate L6M
+irEx = LMM1F(nSims=n, initialSpotRates=initRates_scaled, dT=yearFraction, notional=notional)
 start_time = time.clock()
 a = irEx.getSimulationData()
+
+# exposure = c.getExpectedExposureA(a)
+exposure = array([0., 803.47, 729.78, 486.66])
+cva = c.calcCVA(exposure)
 printTime('CPU: generating simulation data', start_time)
 
-# plot simulationsz
-cycol = cycle('cmy').next
+# bva = cva - c.calcCVA(c.getExpectedExposureB(a))
 
-for simulation in a:
-    x, y = timesteps, append(simulation.mtm, 0)
-    # print y[0]
-    pyplot.plot(x, y, 's', c=cycol(), lw=0.5, alpha=0.6)
-
-# get expected Exposure
-expectedExposure = mean(array([s.mtm for s in a]), axis=0)
-ninetySevenP5 = percentile(array([s.mtm for s in a]), q=97.5, axis=0)
-twoP5 = percentile(array([s.mtm for s in a]), q=2.5, axis=0)
-
-# rate from B91 on ukois16_mdaily.xls
-initRates_BOE_6m_plot = insert(initRates_BOE_6m, 0, 0.463126310164261)
-# add to plot
-# pyplot.plot(x, twoP5,c='#000000', lw=2, alpha=0.8)
-pyplot.plot(x, append(ninetySevenP5, 0.0), c='#00CC00', lw=2, alpha=0.8)
-pyplot.plot(x, append(twoP5, 0.0), c='#0000CC', lw=2, alpha=0.8)
-pyplot.plot(x, append(expectedExposure, 0.0), c='#FF0000', lw=2, alpha=0.8)
-pyplot.plot(x, a(initRates_BOE_6m), lw=2, alpha=0.8)
-# pyplot.plot(x, initRates, lw=2, alpha=0.8)
-pyplot.xlabel('$\Delta t$')
-pyplot.xticks(timesteps)
-pyplot.ylabel('Payment')
-pyplot.legend()
-pyplot.grid(True)
-pyplot.show()
-
-fig, ax = pyplot.subplot()
+print '====='
+print 'cva: ', cva
+# print 'bva: ', bva

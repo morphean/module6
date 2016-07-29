@@ -1,13 +1,19 @@
-from numpy import array, ones, zeros, linspace, exp, put, sum, log
+from numpy import array, ones, zeros, linspace, exp, put, sum, mean
+from pandas import DataFrame
+
+from utils import getTPlusFromList
+
+debug = False
 
 
 class CreditDefaultSwap(object):
-    def __init__(self, N=float, timesteps=int, discountFactors=list, lamda=float, seed=float):
+    def __init__(self, N=float, timesteps=int, discountFactors=list, lamda=float, seed=float, Dt=0.25,
+                 recoveryRate=0.4):
         self.N = N  # notional
         self.__lamda = lamda
         self.__seed = seed
-        self.recoveryRate = 0.4
-        self.Dt = 0.25
+        self.recoveryRate = recoveryRate
+        self.Dt = Dt
         self.timesteps = linspace(0, 1, timesteps + 1)
         self.discountFactors = discountFactors
         self.pT = self.generateProbSurvival()
@@ -17,6 +23,7 @@ class CreditDefaultSwap(object):
         self.defaultLegsSpread = self.calculateDefaultLegSpreads()
         self.__defaultLegSum = sum(self.defaultLegsSpread)
         self.fairSpread = self.premiumLegsSpread / self.defaultLegsSpread
+        self.__expectedExposure = []
 
     @property
     def premiumLegSum(self):
@@ -38,7 +45,14 @@ class CreditDefaultSwap(object):
     def seed(self):
         return self.__seed
 
+    def generateDiscountFactors(self):
+        pass
+
     def generateProbSurvival(self):
+        """
+        using $\exp^{-\lambda*T_i}$
+        :return:
+        """
         pt = ones(len(self.timesteps))
         for index, t in enumerate(self.timesteps):
             if t > 0:
@@ -47,6 +61,10 @@ class CreditDefaultSwap(object):
         return pt
 
     def generateProbDefault(self):
+        """
+        using $P(T,0) = P_{i-1} - P_i$
+        :return:
+        """
         pd = zeros(len(self.timesteps))
         for index, pt in enumerate(self.pT):
             if index > 0:
@@ -56,6 +74,10 @@ class CreditDefaultSwap(object):
         return pd
 
     def calculatePremiumLegSpreads(self):
+        """
+        returns the list of the premium leg values
+        :return: array
+        """
         #          assume 1%
         spreads = zeros(len(self.timesteps))
         for index, (df, pt) in enumerate(zip(self.discountFactors, self.pT)):
@@ -65,6 +87,10 @@ class CreditDefaultSwap(object):
         return spreads
 
     def calculateDefaultLegSpreads(self):
+        """
+        returns the list of the default leg values
+        :return: array
+        """
         #          assume 1%
         spreads = zeros(len(self.timesteps))
         for index, (df, pd) in enumerate(zip(self.discountFactors, self.pD)):
@@ -74,86 +100,146 @@ class CreditDefaultSwap(object):
         return spreads
 
     def calcCVA(self, expectedExposure=array):
-        # LAST BIT to DO
+        cvaData = DataFrame()
+        cvaData['t'] = self.timesteps[1:]
+        cvaData['discountFactor'] = self.discountFactors
+        cvaData['pd'] = self.pD[1:]
+        cvaData['1-R'] = [1 - self.recoveryRate] * len(self.pD[1:])
+        cvaData['exposure'] = [getTPlusFromList(expectedExposure, i, True) for i in range(len(expectedExposure))]
+        cvaData['cvaPerTimeStep'] = cvaData['discountFactor'] * cvaData['pd'] * cvaData['1-R'] * cvaData['exposure']
+        cva = cvaData['cvaPerTimeStep'].sum()
+        cvaData.describe()
+        print cvaData
+        print 'CVA = ', cva
+        return cva
+
         return True
 
     def calcBVA(self, eeA=array, eeB=array):
         # LAST BIT TO DO
         return True
 
+    def getExpectedExposureA(self, simData=array):
+        expectedExposure = mean(array([sim.expA for sim in simData]), axis=0)
+        return expectedExposure
 
-class BasketCDS(CreditDefaultSwap):
-    def __init__(self, N=float, timesteps=int, discountFactors=list, lamda=float, seed=float, dt=float):
-        super(BasketCDS, self).__init__(N, timesteps, discountFactors, lamda, seed)
-        self.hazardRates = self.generateHazardRates()
-        self.dt = dt
+    def getExpectedExposureB(self, simData=array):
+        expectedExposure = mean(array([sim.expB for sim in simData]), axis=0)
+        return expectedExposure
 
-    def bootstrapCurve(self, spreads=list):
-        ts = []
-        impPs = []
 
-        for index, spread in enumerate(spreads):
-            # calc implied survival prob
-            x = dict()
-            if index == 0:
-                impPs.append(1.0)
-            else:
-                # $\frac{(1-R)}{(1-R)+\deltaT*s}$
-                isp = (1 - self.recoveryRate) / ((1 - self.recoveryRate) + self.dt * spread / 10000)
-                impPs.append(isp)
-        return ts
+class Simulation(object):
+    """
+    this class is used a container for a single simulation
+    providing convenenience methods to retrieve
+    markToMarket values
+    eeA = expected exposure from the simulation for Counterparty A
+    eeB = expected exposure from the simulation for Counterparty B
+    """
 
-    def buildTermStructure(self, spreads=list):
+    def __init__(self, liborTable=array, dfTable=array, notional=1000000, dt=0.25, k=0.04):
         """
-        returns terms structure matrix
-        spreads should be supplied unscaled (ie as quoted from market data)
-        :type spreads: list
+
+        :type k: float
+        :type dt: float
+        :type notional: float
+        :type dfTable: ndarray
+        :type liborTable: ndarray
         """
-        t0 = [0.0]
-        oneMr = 1 - self.recoveryRate
+        self.__liborTable = liborTable
+        self.__dfTable = dfTable
 
-        # spreads are input as basis points so scale them for calculations
-        scaledSpreads = [spreads] / 10000
+        # calculate payments for each timestep using the given notional, tenor, fixed rate,
+        # floating(simulated) and discount factors (simulated)
+        self.payments = self.calcPayments(notional, dt, k)
 
-        impliedProbSurvival = [1.0]
-        impliedProbSurvival[1] = (oneMr) / ((oneMr) + self.dt * scaledSpreads[0])
+        self.mtm = array([flt - fxd for flt, fxd in self.payments])
 
-        t1 = 0.0
-        t2 = self.discountFactors[0] * ((1 - self.recoveryRate) * impliedProbSurvival) - (
-                                                                                             1 - self.recoveryRate + self.dt *
-                                                                                             scaledSpreads[1]) *
-        t3 = self.discountFactors[0] * ((1 - self.recoveryRate) * impliedProbSurvival) - (
-            1 - self.recoveryRate + self.dt * scaledSpreads[2])
+        # exposure for counterParty A (using positive mtm)
+        self.expA = array([max(L - K, 0) for L, K in self.payments])
 
-        return t0
+        # exposure for counterParty B (using negative mtm)
+        self.expB = array([min(L - K, 0) for L, K in self.payments])
 
-    def getDefaultPeriod(self):
+    def liborTable(self):
+        return self.__liborTable
+
+    def dfTable(self):
+        return self.__dfTable
+
+    def calcPayments(self, notional=float, dt=float, fixed=-1.0):
         """
-        if ProbOfSurv >= hazard rate -> default
-        return tau
+        calculate payments for the simulation of the Fwd rates and discount factors
+        given notional and tenor
 
+        if fixed is set it will use a fixed rate
+        there is the possibility here of a negative interest rate but that is outside the
+        scope of this exercise
+        :param notional:
+        :param dt:
+        :param fixed:
         :return: float
         """
-        tau
-        return 0.0
+        payments = []
 
-    def getExactDefaultTIme(self):
-        """
-        $ \deltat = - \frac{}{} log \frac{1-u}{P(0,t_{n-1}} $
-        :return:
-        """
-        return dt
+        for index in range(0, len(self.__liborTable)):
+            fwdCurve = self.__liborTable[:, index]
+            df = self.__dfTable[1:, index]
 
-    def generateHazardRates(self):
-        """
-        generate hazard rates using:
-        $\Lambda_m = -\frac({1}{\delta t} log \frac{P(0,t_m)}{P(0,t_{m-1})} $
-        :return:
-        """
-        hz = zeros(len.self.timesteps)
-        for index, pt in enumerate(self.pT):
-            if index > 0:
-                hz_m = -(1 / self.Dt) * log(pt / self.pT[index - 1])
-                put(hz_m, index, hz)
+            floatingLeg = [fwd * dfi * notional * dt for fwd, dfi in zip(fwdCurve, df)]
+            fixedLeg = [fixed * dfi * notional * dt for dfi in df]
+            # fixedLeg[len(self.__liborTable)] = 0
+            payments.append([sum(floatingLeg), sum(fixedLeg)])
 
-        return hz
+            if debug:
+                print 'from t-', index, '--- fixed - ', sum(fixedLeg), '--- floating -', sum(floatingLeg)
+                print fixedLeg
+                print '--'
+                print floatingLeg
+                print '--'
+
+        return payments
+
+
+def genDiscountFactors(t=list, s=list):
+    discount = []
+
+    for i, (ti, si) in enumerate(zip(t[1:], s)):
+        #
+        # DFi = 0.0
+        #
+        # if i > 0:
+        a = si * ti * -1
+        DFi = exp(a)
+
+        discount.append(DFi)
+
+    return discount
+
+
+# plot tbis against reference curve
+def genFwdCurve(t=list, s=list):
+    curve = []
+
+    for i, (ti, si) in enumerate(zip(t, s)):
+        if i >= 0:
+            sim1 = s[i - 1] if i > 0 else 0.0
+            tim1 = t[i - 1] if i > 0 else 0.0
+            Li = ((si * ti) - (sim1 * tim1)) / (ti - tim1)
+            curve.append(Li)
+    return curve
+
+
+if __name__ == "__main__":
+    print 'Testing Basket Default Swap'
+
+    # df = [0.9803, 0.9514, 0.9159, 0.8756, 0.8328]
+    # seed = 0.01
+    # payments = 4
+    # notional = 1000000
+    # # fixed hazard rates
+    # lamda = 0.03
+    #
+    # b = BasketCDS(N=notional, timesteps=5, discountFactors=df, lamda=lamda, dt=1.0, seed=seed,)
+    # b.recoveryRate = 0.5
+    # b.buildFlatTermStructure([57]*5)
